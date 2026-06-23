@@ -2,6 +2,7 @@ using Employee_Admin_Portal.Data;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.DataProtection;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.IdentityModel.Tokens;
@@ -9,8 +10,18 @@ using System.Text;
 
 var builder = WebApplication.CreateBuilder(args);
 
-var port = Environment.GetEnvironmentVariable("PORT") ?? "3000";
+var port = Environment.GetEnvironmentVariable("PORT") ?? "5000";
 builder.WebHost.UseUrls($"http://0.0.0.0:{port}");
+
+// Trust Replit's reverse proxy so Host, scheme, and IP are read from forwarded headers
+builder.Services.Configure<ForwardedHeadersOptions>(options =>
+{
+    options.ForwardedHeaders = ForwardedHeaders.XForwardedFor
+                             | ForwardedHeaders.XForwardedProto
+                             | ForwardedHeaders.XForwardedHost;
+    options.KnownNetworks.Clear();
+    options.KnownProxies.Clear();
+});
 
 // Persist data protection keys across restarts
 builder.Services.AddDataProtection()
@@ -42,7 +53,7 @@ builder.Services.AddAuthentication(options =>
     options.AccessDeniedPath = "/Account/AccessDenied";
     options.ExpireTimeSpan = TimeSpan.FromHours(8);
     options.Cookie.SameSite = SameSiteMode.None;
-    options.Cookie.SecurePolicy = CookieSecurePolicy.SameAsRequest;
+    options.Cookie.SecurePolicy = CookieSecurePolicy.Always;
     options.Cookie.HttpOnly = true;
     options.Cookie.Name = ".EAP.Auth";
 })
@@ -66,7 +77,7 @@ builder.Services.AddAntiforgery(options =>
 {
     options.Cookie.Name = ".EAP.Antiforgery";
     options.Cookie.SameSite = SameSiteMode.None;
-    options.Cookie.SecurePolicy = CookieSecurePolicy.SameAsRequest;
+    options.Cookie.SecurePolicy = CookieSecurePolicy.Always;
     options.Cookie.HttpOnly = true;
 });
 
@@ -79,12 +90,13 @@ using (var scope = app.Services.CreateScope())
     Employee_Admin_Portal.Data.DbSeeder.Seed(db);
 }
 
-// Replit terminates SSL at the proxy level; the app only sees HTTP internally.
-// Force scheme to https so SameAsRequest marks all cookies as Secure (required for SameSite=None).
-// Also remove X-Frame-Options so the app can render inside Replit's preview iframe.
+// Must be first — reads X-Forwarded-Proto/Host so the rest of the pipeline
+// sees the correct public scheme and hostname (required for redirect URLs).
+app.UseForwardedHeaders();
+
+// Remove X-Frame-Options so the app renders inside Replit's preview iframe.
 app.Use(async (context, next) =>
 {
-    context.Request.Scheme = "https";
     context.Response.OnStarting(() =>
     {
         context.Response.Headers.Remove("X-Frame-Options");
