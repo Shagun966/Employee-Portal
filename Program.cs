@@ -81,9 +81,15 @@ using (var scope = app.Services.CreateScope())
 
 // Replit terminates SSL at the proxy level; the app only sees HTTP internally.
 // Force scheme to https so SameAsRequest marks all cookies as Secure (required for SameSite=None).
+// Also remove X-Frame-Options so the app can render inside Replit's preview iframe.
 app.Use(async (context, next) =>
 {
     context.Request.Scheme = "https";
+    context.Response.OnStarting(() =>
+    {
+        context.Response.Headers.Remove("X-Frame-Options");
+        return Task.CompletedTask;
+    });
     await next();
 });
 
